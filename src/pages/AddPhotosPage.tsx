@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -8,7 +8,7 @@ import { toast } from "sonner";
 
 interface DetectedFace {
   id: string;
-  imageUrl: string;
+  imageBase64: string;
   status: "known" | "unknown";
   name?: string;
 }
@@ -18,62 +18,80 @@ export default function AddPhotosPage() {
   const [scanProgress, setSccanProgress] = useState(0);
   const [detectedFaces, setDetectedFaces] = useState<DetectedFace[]>([]);
   const [showResults, setShowResults] = useState(false);
+  const [folderPath, setFolderPath] = useState<string | null>(null);
 
-  const handleFileSelect = () => {
-    toast.info("File selection simulated - in production, this would open a file picker");
-    
-    // Simulate file selection
-    setTimeout(() => {
-      toast.success("Files selected! Ready to import and digitize.");
-    }, 500);
+  useEffect(() => {
+    const handleProgress = (_event, progress) => {
+      setSccanProgress(progress);
+      if (progress >= 100) {
+        setIsScanning(false);
+        setShowResults(true);
+      }
+    };
+
+    window.electronAPI.on('scan-progress', handleProgress);
+
+    return () => {
+      window.electronAPI.off('scan-progress', handleProgress);
+    };
+  }, []);
+
+
+
+  const selectFolder = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.selectPath();
+      if (result) {
+        setFolderPath(result);
+        toast.success(`Folder selected: ${result}`);
+      } else {
+        toast.error("No folder selected.");
+      }
+    } catch (error: any) {
+      toast.error(`Failed to select folder: ${error.message}`);
+    }
+  }, []);
+
+
+  const handleUpload = async () => {
+    if (!folderPath) {
+      toast.error("Please select a folder first.");
+      return;
+    }
+
+    try {
+      const result = await window.electronAPI.operateOnPath(folderPath);
+      if (result.success) {
+        toast.success(result.message);
+      } else {
+        toast.error(result.error || "Failed to upload photos.");
+      }
+    } catch (error: any) {
+      toast.error(`Upload failed: ${error.message}`);
+    }
   };
+  const handleDigitize = async () => {
+    if (!folderPath) {
+      toast.error("Please select a folder first.");
+      return;
+    }
 
-  const handleDigitize = () => {
     setIsScanning(true);
     setSccanProgress(0);
     setShowResults(false);
 
-    // Simulate scanning progress
-    const interval = setInterval(() => {
-      setSccanProgress((prev) => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          setIsScanning(false);
-          setShowResults(true);
-          
-          // Mock detected faces
-          setDetectedFaces([
-            {
-              id: "1",
-              imageUrl: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=200&h=200&fit=crop",
-              status: "known",
-              name: "Sarah Johnson",
-            },
-            {
-              id: "2",
-              imageUrl: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&h=200&fit=crop",
-              status: "known",
-              name: "Michael Chen",
-            },
-            {
-              id: "3",
-              imageUrl: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=200&h=200&fit=crop",
-              status: "unknown",
-            },
-            {
-              id: "4",
-              imageUrl: "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=200&h=200&fit=crop",
-              status: "unknown",
-            },
-          ]);
-          
-          toast.success("Digitization complete! Review detected faces below.");
-          return 100;
-        }
-        return prev + 10;
-      });
-    }, 300);
+    try {
+      const result = await window.electronAPI.operateOnPath(folderPath);
+      console.log(result);
+
+      // Set detected faces after completion
+      setDetectedFaces(result);
+    } catch (error: any) {
+      toast.error(`Upload failed: ${error.message}`);
+      setIsScanning(false);
+    }
   };
+
 
   const assignFace = (faceId: string) => {
     toast.info("In production, this would open a dialog to assign or create a profile");
@@ -108,11 +126,11 @@ export default function AddPhotosPage() {
                 </p>
               </div>
               <div className="flex gap-3">
-                <Button onClick={handleFileSelect}>
+                {/* <Button onClick={handleFileSelect}>
                   <Upload className="h-4 w-4 mr-2" />
                   Select Files
-                </Button>
-                <Button variant="outline" onClick={handleFileSelect}>
+                </Button> */}
+                <Button variant="outline" onClick={selectFolder}>
                   Select Folder
                 </Button>
               </div>
@@ -133,7 +151,7 @@ export default function AddPhotosPage() {
                   Detect faces and match with existing profiles
                 </p>
               </div>
-              
+
               {isScanning ? (
                 <div className="w-full space-y-2">
                   <Progress value={scanProgress} className="w-full" />
@@ -166,7 +184,7 @@ export default function AddPhotosPage() {
                     {knownFaces.map((face) => (
                       <div key={face.id} className="text-center space-y-2">
                         <img
-                          src={face.imageUrl}
+                          src={face.imageBase64}
                           alt={face.name}
                           className="w-full aspect-square object-cover rounded-lg"
                         />
@@ -198,7 +216,7 @@ export default function AddPhotosPage() {
                       >
                         <div className="relative">
                           <img
-                            src={face.imageUrl}
+                            src={face.imageBase64}
                             alt="Unknown"
                             className="w-full aspect-square object-cover rounded-lg transition-smooth group-hover:opacity-75"
                           />
