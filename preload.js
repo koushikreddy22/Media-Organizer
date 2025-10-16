@@ -7,4 +7,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('backend:action', { action: 'processPhotos', payload: { folderPath } }),
   verifyFace: (data) =>
     ipcRenderer.invoke('backend:action', { action: 'verifyFace', payload: data }),
+  on: (channel, callback) => {
+    ipcRenderer.on(channel, callback);
+  },
+  off: (channel, callback) => {
+    ipcRenderer.removeListener(channel, callback);
+  },
 });

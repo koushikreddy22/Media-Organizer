@@ -3,11 +3,11 @@ import { getValidPhotos } from '../components/get-valid-photos.js';
 import { verifyFace } from '../components/verify-face.js';
 
 
-const digitizePhotos = async (path) => {
+const digitizePhotos = async (path, event) => {
     console.log("Digitizing photos...");
     const validPhotos = getValidPhotos(path)
-    const { allDescriptors, unknownFaces } = await GenerateEmbeddings(validPhotos, path)
-    return { unknownFaces }
+    const allFaces = await GenerateEmbeddings(validPhotos, path, event)
+    return allFaces
 }
 
 const verifyFaces = async (profile) => {

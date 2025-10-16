@@ -7,6 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { fileURLToPath } from 'url';
 import { getQdrant } from './databases.js';
 import sharp from 'sharp';
+import scanEmitter from '../../eventBus.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const MONGO_URI = 'mongodb://localhost:27017';
@@ -76,12 +77,12 @@ async function loadFaceApiModels() {
     }
 }
 
-async function GenerateEmbeddings(photos, path) {
+async function GenerateEmbeddings(photos, path, event) {
     const qdrant = await getQdrant()
-    const allDescriptors = [];
-    const unknownFaces = []; // Unknown faces with image data
+    const allFaces = {}
+    const total = photos.length;
 
-    for (const imagePath of photos) {
+    for (const [i, imagePath] of Object.entries(photos)) {
         let fullPath = path + "/" + imagePath
         try {
             const normalizedBuffer = await sharp(fullPath)
@@ -92,7 +93,7 @@ async function GenerateEmbeddings(photos, path) {
             const tensor = tf.node.decodeImage(normalizedBuffer, 3);
             let detections = [];
             try {
-                detections = await faceapi.detectAllFaces(tensor,  new faceapi.SsdMobilenetv1Options({ minConfidence: 0.4 }))
+                detections = await faceapi.detectAllFaces(tensor, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.4 }))
                     .withFaceLandmarks()
                     .withFaceDescriptors();
             } catch (err) {
@@ -116,30 +117,36 @@ async function GenerateEmbeddings(photos, path) {
                     if (searchResult.length > 0 && searchResult[0].score > 0.95) {
                         personId = searchResult[0].payload.personId;
                         name = searchResult[0].payload.name;
-                    } else {
-                    personId = uuidv4();
-                    name = 'unknown';
-
-                    // Include Base64 image data for frontend display
-                    unknownFaces.push({
-                        id,
-                        path: fullPath,
-                        personId,
-                        descriptor: descriptorArray,
-                        imageBase64: await cropFace(det, tensor)
-                    });
-                    await qdrant.upsert('profiles', {
-                        "points": [
-                            {
-                                "id": id,
-                                "payload": {
-                                    "personId": personId,
-                                    "name": name
-                                },
-                                "vector": descriptorArray
+                        if (!allFaces[personId]) {
+                            allFaces[personId] = {
+                                id,
+                                personId,
+                                status: "known",
+                                name: name,
+                                imageBase64: await cropFace(det, tensor)
                             }
-                        ]
-                    });
+                        }
+                    } else {
+                        personId = uuidv4();
+                        name = 'unknown';
+                        allFaces[personId] = {
+                            id,
+                            personId,
+                            status: "unknown",
+                            imageBase64: await cropFace(det, tensor)
+                        }
+                        await qdrant.upsert('profiles', {
+                            "points": [
+                                {
+                                    "id": id,
+                                    "payload": {
+                                        "personId": personId,
+                                        "name": name
+                                    },
+                                    "vector": descriptorArray
+                                }
+                            ]
+                        });
                     }
 
 
@@ -152,8 +159,6 @@ async function GenerateEmbeddings(photos, path) {
                         path: fullPath
                     });
                     await photoDoc.save();
-
-                    allDescriptors.push({ id, personId, name, descriptor: descriptorArray, originalPath: fullPath });
                 }
             } else {
                 const nonFaceDoc = new NonFacePhoto({
@@ -167,9 +172,12 @@ async function GenerateEmbeddings(photos, path) {
             tf.dispose(tensor);
         } catch (error) {
             console.error(`Failed to process ${fullPath}:`, error);
+        } finally {
+            const progress = Math.round(((i + 1) / total) * 100);
+            scanEmitter.emit('scan-progress', progress);
         }
     }
 
-    return { allDescriptors, unknownFaces };
+    return Object.values(allFaces);
 }
 export { GenerateEmbeddings }
